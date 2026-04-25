@@ -21,23 +21,44 @@ You'll need a terminal and two free tools installed first:
 - [**Node.js**](https://nodejs.org) (v20 or newer)
 - [**Bun**](https://bun.sh) (one-line install on their site)
 
-Then paste this into your terminal:
+Then clone and install:
 
 ```bash
 git clone https://github.com/chronoshivt/o-sample.git
 cd o-sample
 npm install
+```
+
+From there, two ways to run it — pick whichever you prefer.
+
+### Option A — just run it (easiest)
+
+```bash
+npm run dev
+```
+
+Open <http://localhost:5173> in your browser. Keep the terminal open while you use it. That's all you need; you can stop here.
+
+### Option B — build a standalone app
+
+If you'd rather have a single double-clickable app instead of running `npm run dev` each time:
+
+```bash
 npm run build:exe
 ```
 
-That builds a single self-contained app for your computer. Run it whenever:
+That produces a self-contained binary. Run it whenever:
 
 ```bash
 ./dist/o-sample          # macOS / Linux
 .\dist\o-sample.exe      # Windows
 ```
 
-Your browser opens to the app. Paste a YouTube URL, trim, click **EXPORT**. Done.
+Your browser opens to the app automatically.
+
+---
+
+Either way, paste a YouTube URL, trim, click **EXPORT**. Done.
 
 The first run downloads `yt-dlp` and `ffmpeg` (the tools that fetch and process audio — about 80 MB, one-time). They get cached, so after that the app is fully offline.
 
