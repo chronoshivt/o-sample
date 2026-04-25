@@ -1,0 +1,25 @@
+{
+  "name": "o-sample",
+  "version": "0.1.0",
+  "private": true,
+  "description": "YouTube to MP3 clipper, built for samplers and producers.",
+  "license": "MIT",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n client,server -c cyan,green --kill-others-on-fail \"npm:dev:client\" \"npm:dev:server\"",
+    "dev:client": "npm -w @o-sample/client run dev",
+    "dev:server": "npm -w @o-sample/server run dev",
+    "build": "npm -w @o-sample/client run build",
+    "test": "npm -w @o-sample/server run test",
+    "preview": "npm -w @o-sample/client run preview"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

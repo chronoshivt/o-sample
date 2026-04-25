@@ -1,0 +1,36 @@
+# dependencies
+node_modules
+*.tsbuildinfo
+
+# build output
+dist
+out
+build
+
+# server runtime
+server/downloads
+cookies.txt
+youtube-cookies-filtered.txt
+
+# logs
+*.log
+logs
+
+# env
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode
+.idea
+
+# bun (we use npm at the root, but server workspace uses bun runtime)
+bun.lock
+
+# vite cache
+.vite
