@@ -1230,7 +1230,7 @@ const App: React.FC = () => {
           </div>
           <a
             className="tc-about-repo"
-            href="https://github.com/"
+            href="https://github.com/chronoshivt/o-sample"
             target="_blank"
             rel="noopener noreferrer"
           >

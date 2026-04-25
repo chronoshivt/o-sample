@@ -1,95 +1,109 @@
-# o-sample
+<p align="center">
+  <img src="./assets/logo.svg" alt="o-sample" width="540" />
+</p>
 
-YouTube to MP3 clipper, built for samplers and producers. Paste a URL, trim the part you want, export a clean MP3 — no accounts, no ads, no installs.
+<p align="center">
+  <strong>A free YouTube → MP3 clipper, built for music producers.</strong><br/>
+  Paste a URL, drag the markers to trim, drop the MP3 straight into your DAW.<br/>
+  No signups, no ads, no watermarks.
+</p>
 
-## I just want to use it
+---
 
-Build a standalone executable for your machine. The exe bundles everything (yt-dlp, ffmpeg, the UI, the server) so it runs with zero other installs.
+## Get it running
 
-You need **Node.js ≥ 20** and **Bun ≥ 1.1** ([install Bun](https://bun.sh)).
+You'll need a terminal and two free tools installed first:
+
+- [**Node.js**](https://nodejs.org) (v20 or newer)
+- [**Bun**](https://bun.sh) (one-line install on their site)
+
+Then paste this into your terminal:
 
 ```bash
 git clone https://github.com/chronoshivt/o-sample.git
 cd o-sample
 npm install
 npm run build:exe
-./dist/o-sample        # macOS / Linux
-.\dist\o-sample.exe    # Windows
 ```
 
-The exe will start a local server, open your browser, and that's it. The first run extracts the bundled yt-dlp + ffmpeg into `~/.o-sample/bin/` (subsequent runs are instant). If you already have yt-dlp installed on your `PATH`, the exe prefers that one — useful for keeping yt-dlp current as YouTube tweaks its anti-bot checks.
-
-The exe is built only for your platform; if you want one for a different OS, run `npm run build:exe` on that OS.
-
-## I want to hack on it
+That builds a single self-contained app for your computer. Run it whenever:
 
 ```bash
-git clone https://github.com/chronoshivt/o-sample.git
-cd o-sample
+./dist/o-sample          # macOS / Linux
+.\dist\o-sample.exe      # Windows
+```
+
+Your browser opens to the app. Paste a YouTube URL, trim, click **EXPORT**. Done.
+
+The first run downloads `yt-dlp` and `ffmpeg` (the tools that fetch and process audio — about 80 MB, one-time). They get cached, so after that the app is fully offline.
+
+## Where things go
+
+| What                          | Where                          |
+| ----------------------------- | ------------------------------ |
+| Cached YouTube audio          | `~/.o-sample/downloads/`       |
+| Bundled `yt-dlp` and `ffmpeg` | `~/.o-sample/bin/`             |
+| Your exported MP3s            | Your browser's downloads folder |
+
+Delete `~/.o-sample/` any time to start fresh.
+
+## License
+
+[MIT](./LICENSE) — free to use, modify, and share. Just don't hold the maintainers liable. For personal, fair-use clipping (e.g. sampling for music production); respect YouTube's Terms of Service and content creators' rights.
+
+---
+
+<details>
+<summary><strong>For developers and self-hosters</strong></summary>
+
+### Run from source
+
+```bash
 npm install
 npm run dev
 ```
 
-That's it. The first run auto-downloads `yt-dlp` and `ffmpeg` into `vendor/` if they're not already on your `PATH` (~80 MB, one-time, cached). If you'd rather use system installs, `brew install yt-dlp ffmpeg` (or your platform's equivalent) before `npm run dev` and the server will pick those up instead.
+- UI on <http://localhost:5173> (Vite, hot reload)
+- API on <http://localhost:3847> (Bun)
 
-`npm run dev` starts:
+If `yt-dlp` and `ffmpeg` aren't on your `PATH`, the dev server downloads them to `vendor/` on first start (same ~80 MB cache as the exe build). If they *are* on `PATH` (e.g. `brew install yt-dlp ffmpeg`), those get used instead — handy for keeping yt-dlp current via `brew upgrade`.
 
-- the Vite dev server at <http://localhost:5173> (the UI you'll edit)
-- the Bun API server at <http://localhost:3847> (handles YouTube + ffmpeg)
+### Layout
 
-## I want to self-host
+```
+client/    # React + Vite frontend
+server/    # Bun HTTP server, talks to yt-dlp + ffmpeg
+scripts/   # build-exe.ts (one-shot exe builder)
+```
 
-A production `Dockerfile` lives in [`server/`](./server/Dockerfile). It pins yt-dlp + ffmpeg to known paths and exposes the API on port 3847:
+### Scripts
+
+| Command             | What it does                                  |
+| ------------------- | --------------------------------------------- |
+| `npm run dev`       | Client + server in parallel, with hot reload  |
+| `npm run build`     | Build the client into `client/dist/`          |
+| `npm run build:exe` | Build a standalone exe for your platform     |
+| `npm test`          | Server test suite                             |
+
+### Server config
+
+Everything's an env var, all optional. See [`server/.env.example`](./server/.env.example) for the full list. The interesting ones:
+
+- `YT_PROXY` — HTTP/SOCKS5 proxy (residential proxies dodge YouTube's anti-bot checks)
+- `YT_COOKIES_FILE` — Netscape cookies file for authenticated requests
+- `YT_PLAYER_CLIENT` — override yt-dlp's player client (e.g. `tv_embedded`)
+
+### Self-hosting with Docker
 
 ```bash
 docker build -t o-sample-server -f server/Dockerfile server/
 docker run -p 3847:3847 o-sample-server
 ```
 
-The client is served separately — build it with `npm run build` and host `client/dist/` on any static host (Netlify, Cloudflare Pages, etc.). Point the client at your server with the `VITE_SAMPLE_SERVER_ORIGIN` build-time env var.
+Build the client separately (`npm run build` → `client/dist/`) and host it on any static host (Netlify, Cloudflare Pages, etc). Point it at your server via `VITE_SAMPLE_SERVER_ORIGIN`.
 
-## Layout
+### Build internals
 
-```
-o-sample/
-├── client/   # React + Vite UI (the part users see)
-├── server/   # Bun HTTP server + yt-dlp/ffmpeg orchestration
-└── scripts/  # build-exe.ts (vite build → bundle binaries → bun --compile)
-```
+`server/embedded-assets.gen.ts` and `server/vendored-binaries.gen.ts` are committed as empty stubs and rewritten by `npm run build:exe`. After a build, `git checkout server/*.gen.ts` resets them. The `vendor/` and `dist/` directories are gitignored — safe to delete to force a fresh build.
 
-## Scripts
-
-| Command              | What it does                                     |
-| -------------------- | ------------------------------------------------ |
-| `npm run dev`        | Run client + server in parallel for development  |
-| `npm run build`      | Build the client into `client/dist/`             |
-| `npm run build:exe`  | Build a standalone exe for your platform         |
-| `npm test`           | Run the server test suite                        |
-| `npm run preview`    | Preview the production client build              |
-
-## Server configuration
-
-The server reads its config from environment variables. See [`server/.env.example`](./server/.env.example) for the full list.
-
-| Variable           | Default               | Purpose                                                    |
-| ------------------ | --------------------- | ---------------------------------------------------------- |
-| `PORT`             | `3847`                | HTTP port                                                  |
-| `DOWNLOAD_DIR`     | `./downloads`         | Where downloaded audio + clips are cached                  |
-| `YT_DLP`           | `yt-dlp`              | Path to the `yt-dlp` binary (defaults to `PATH` lookup)    |
-| `FFMPEG`           | `ffmpeg`              | Path to the `ffmpeg` binary                                |
-| `YT_PROXY`         | _(unset)_             | HTTP/HTTPS/SOCKS5 proxy URL                                |
-| `YT_COOKIES_FILE`  | _(unset)_             | Netscape-format cookies file for YouTube auth              |
-| `YT_PLAYER_CLIENT` | _(yt-dlp default)_    | Override yt-dlp player client (e.g. `tv_embedded`)         |
-
-## Notes for contributors
-
-- `server/embedded-assets.gen.ts` and `server/vendored-binaries.gen.ts` are committed as empty stubs and overwritten by `npm run build:exe`. After a build, `git status` shows them modified — that's expected, just `git checkout server/*.gen.ts` to reset before committing other changes.
-- `vendor/` is the cache directory for downloaded yt-dlp + ffmpeg binaries. Gitignored. Delete it to force a fresh download on the next build.
-
-## License
-
-[MIT](./LICENSE)
-
-## Disclaimer
-
-This tool is for personal, fair-use clipping (e.g. sampling for music production). Respect YouTube's Terms of Service and the rights of content creators. The maintainers are not responsible for misuse.
+</details>
