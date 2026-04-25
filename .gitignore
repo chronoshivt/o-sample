@@ -7,6 +7,10 @@ dist
 out
 build
 
+# downloaded binaries (yt-dlp, ffmpeg) cached by `npm run build:exe`.
+# regenerated on demand from upstream — don't commit
+vendor
+
 # server runtime
 server/downloads
 cookies.txt

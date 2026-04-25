@@ -1,6 +1,21 @@
 import { defaultConfig, startServer } from "./app"
+import { ensureBinariesAvailable } from "./bootstrap"
 
-startServer(defaultConfig)
-console.log(`y-sample server listening on :${defaultConfig.port}`)
-const proxyLabel = defaultConfig.proxy ? defaultConfig.proxy.replace(/\/\/[^@]+@/, "//***@") : "(none)"
-console.log(`y-sample config: ytDlp=${defaultConfig.ytDlp} ffmpeg=${defaultConfig.ffmpeg} downloadDir=${defaultConfig.downloadDir} proxy=${proxyLabel} cookies=${defaultConfig.cookiesFile ?? "(none)"} playerClient=${defaultConfig.playerClient ?? "(default)"}`)
+const resolved = await ensureBinariesAvailable(defaultConfig)
+const config = {
+  ...defaultConfig,
+  ytDlp: resolved.ytDlp,
+  ffmpeg: resolved.ffmpeg,
+}
+
+startServer(config)
+console.log(`o-sample server listening on :${config.port}`)
+const proxyLabel = config.proxy
+  ? config.proxy.replace(/\/\/[^@]+@/, "//***@")
+  : "(none)"
+console.log(
+  `o-sample config: ytDlp=${config.ytDlp} ffmpeg=${config.ffmpeg}` +
+  ` downloadDir=${config.downloadDir} proxy=${proxyLabel}` +
+  ` cookies=${config.cookiesFile ?? "(none)"}` +
+  ` playerClient=${config.playerClient ?? "(default)"}`
+)

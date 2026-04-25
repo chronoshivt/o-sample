@@ -178,6 +178,7 @@ async function runYtDlp(config: ServerConfig, videoId: string, filename: string)
         "-o",
         outputTemplate
     ]
+    args.push("--ffmpeg-location", config.ffmpeg)
     if (config.proxy) args.push("--proxy", config.proxy)
     if (config.cookiesFile) args.push("--cookies", config.cookiesFile)
     if (config.playerClient) args.push("--extractor-args", `youtube:player_client=${config.playerClient}`)

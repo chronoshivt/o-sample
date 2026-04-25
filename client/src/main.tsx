@@ -26,7 +26,11 @@ import {
 import type { TrackData } from "@/lib/types";
 
 const BPM = 120;
-const SERVER_ORIGIN = (import.meta.env.VITE_SAMPLE_SERVER_ORIGIN as string | undefined) || "http://127.0.0.1:3847";
+// If VITE_SAMPLE_SERVER_ORIGIN is set to "" at build time (e.g. when bundling
+// into the standalone exe where API + UI share an origin), fetches resolve
+// relative to the page. Unset → dev default of the local API server on :3847.
+const SERVER_ORIGIN_ENV = import.meta.env.VITE_SAMPLE_SERVER_ORIGIN as string | undefined;
+const SERVER_ORIGIN = SERVER_ORIGIN_ENV !== undefined ? SERVER_ORIGIN_ENV : "http://127.0.0.1:3847";
 const WAVE_HEIGHT = 130;
 
 type VideoInfo = {

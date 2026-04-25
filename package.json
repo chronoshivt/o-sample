@@ -13,6 +13,7 @@
     "dev:client": "npm -w @o-sample/client run dev",
     "dev:server": "npm -w @o-sample/server run dev",
     "build": "npm -w @o-sample/client run build",
+    "build:exe": "bun scripts/build-exe.ts",
     "test": "npm -w @o-sample/server run test",
     "preview": "npm -w @o-sample/client run preview"
   },
