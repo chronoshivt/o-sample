@@ -30,11 +30,16 @@ export function isPlatformSupported(): boolean {
   return vendorPlatformKey() in YTDLP_URLS
 }
 
+// Windows requires the .exe suffix for spawn() to find the binary via PATHEXT.
+export function vendorBinaryName(base: "yt-dlp" | "ffmpeg"): string {
+  return process.platform === "win32" ? `${base}.exe` : base
+}
+
 export function vendorPathsFor(rootDir: string): VendorPaths {
   const vendorDir = resolve(rootDir, "vendor")
   return {
-    ytDlp: resolve(vendorDir, "yt-dlp"),
-    ffmpeg: resolve(vendorDir, "ffmpeg"),
+    ytDlp: resolve(vendorDir, vendorBinaryName("yt-dlp")),
+    ffmpeg: resolve(vendorDir, vendorBinaryName("ffmpeg")),
   }
 }
 
