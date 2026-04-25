@@ -8,6 +8,10 @@
   No signups, no ads, no watermarks.
 </p>
 
+<p align="center">
+  <img src="./assets/screenshot.png" alt="o-sample screenshot" width="900" />
+</p>
+
 ---
 
 ## Get it running

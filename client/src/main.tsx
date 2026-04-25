@@ -739,6 +739,7 @@ const App: React.FC = () => {
     setDownloadedAudio(null);
     setSourceAudioBuffer(null);
     setRegionBox(null);
+    setStatus("Looking up video info…");
 
     try {
       const payload = await requestJson<{ ok: true; video: VideoInfo }>("/url", { url: urlToLoad });
@@ -1008,6 +1009,15 @@ const App: React.FC = () => {
                 placeholder="https://youtu.be/..."
                 spellCheck={false}
               />
+              {isResolving && (
+                <div
+                  className="tc-url-loading-track"
+                  role="progressbar"
+                  aria-label="Looking up video info"
+                >
+                  <div className="tc-url-loading-fill" />
+                </div>
+              )}
 
               <div className="tc-lcd-row" style={{ marginTop: 2 }}>
                 <span className="label">OUTPUT</span>

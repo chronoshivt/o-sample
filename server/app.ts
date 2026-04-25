@@ -1,7 +1,6 @@
 import { mkdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { spawn } from "node:child_process"
-import Innertube from "youtubei.js"
 
 export interface ServerConfig {
     port: number
@@ -132,11 +131,94 @@ function pickBestThumbnail(
     return thumbs.reduce((best, t) => (t.width > best.width ? t : best)).url
 }
 
-let ytPromise: Promise<Innertube> | null = null
+interface YtDlpVideoInfo {
+    id?: string
+    title?: string
+    uploader?: string
+    channel?: string
+    channel_id?: string
+    duration?: number
+    view_count?: number
+    description?: string
+    thumbnails?: { url: string; width?: number; height?: number }[]
+}
 
-function getYt(): Promise<Innertube> {
-    ytPromise ??= Innertube.create()
-    return ytPromise
+type VideoInfoResult =
+    | { ok: true; info: YtDlpVideoInfo }
+    | { ok: false; status: number; error: string }
+
+async function fetchVideoInfoViaYtDlp(config: ServerConfig, videoId: string): Promise<VideoInfoResult> {
+    const args = [
+        "--dump-single-json",
+        "--skip-download",
+        "--no-playlist",
+        "--no-progress",
+        "--no-warnings"
+    ]
+    if (config.proxy) args.push("--proxy", config.proxy)
+    if (config.cookiesFile) args.push("--cookies", config.cookiesFile)
+    // Datacenter IPs trip YouTube's bot check on the metadata extraction path.
+    // tv_embedded reliably bypasses it; fall back through the others if it fails.
+    const clients = config.playerClient ?? "tv_embedded,mweb,web_safari,default"
+    args.push("--extractor-args", `youtube:player_client=${clients}`)
+    args.push(`https://www.youtube.com/watch?v=${videoId}`)
+
+    const child = spawn(config.ytDlp, args, { stdio: ["ignore", "pipe", "pipe"] })
+
+    let stdout = ""
+    let stderr = ""
+    child.stdout.on("data", c => {
+        stdout += String(c)
+    })
+    child.stderr.on("data", c => {
+        stderr += String(c)
+    })
+
+    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000)
+    let timedOut = false
+    timer.unref?.()
+
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.on("error", err => {
+            clearTimeout(timer)
+            reject(err)
+        })
+        child.on("close", (code, signal) => {
+            clearTimeout(timer)
+            if (signal === "SIGKILL") timedOut = true
+            resolve(code)
+        })
+    }).catch((err: Error) => {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            console.error("[y-sample] yt-dlp spawn ENOENT", { path: config.ytDlp, err: err.message })
+            return "ENOENT" as const
+        }
+        console.error("[y-sample] yt-dlp spawn error", err)
+        throw err
+    })
+
+    if (exitCode === "ENOENT") {
+        return { ok: false, status: 500, error: `yt-dlp not installed on server (tried: ${config.ytDlp})` }
+    }
+    if (timedOut) {
+        return { ok: false, status: 504, error: "video info lookup timed out" }
+    }
+    if (exitCode !== 0) {
+        const tail = (stderr || stdout).trim().split("\n").slice(-3).join(" | ")
+        const lower = tail.toLowerCase()
+        console.error("[y-sample] yt-dlp info exit", exitCode, tail)
+        if (lower.includes("private video") || lower.includes("unavailable") || lower.includes("not available")) {
+            return { ok: false, status: 404, error: "video unavailable" }
+        }
+        return { ok: false, status: 502, error: "could not load video info" }
+    }
+
+    try {
+        return { ok: true, info: JSON.parse(stdout) as YtDlpVideoInfo }
+    } catch (e) {
+        console.error("[y-sample] yt-dlp json parse error", e)
+        return { ok: false, status: 502, error: "could not parse video info" }
+    }
 }
 
 type YtDlpResult = { ok: true; filename: string; cached: boolean } | { ok: false; status: number; error: string }
@@ -178,7 +260,6 @@ async function runYtDlp(config: ServerConfig, videoId: string, filename: string)
         "-o",
         outputTemplate
     ]
-    args.push("--ffmpeg-location", config.ffmpeg)
     if (config.proxy) args.push("--proxy", config.proxy)
     if (config.cookiesFile) args.push("--cookies", config.cookiesFile)
     if (config.playerClient) args.push("--extractor-args", `youtube:player_client=${config.playerClient}`)
@@ -401,43 +482,32 @@ export async function handleRequest(req: Request, config: ServerConfig = default
             return json({ error: "not a youtube video url" }, { status: 400 })
         }
 
-        try {
-            const yt = await getYt()
-            const info = await yt.getBasicInfo(videoId)
-            const bi = info.basic_info
-
-            const channelId = bi.channel_id ?? bi.channel?.id ?? ""
-            let desc = bi.short_description ?? ""
-            if (desc.length > DESC_MAX) {
-                desc = desc.slice(0, DESC_MAX - 1) + "…"
-            }
-
-            const video = {
-                id: bi.id ?? videoId,
-                title: bi.title ?? "",
-                author: bi.author ?? bi.channel?.name ?? "",
-                channel_id: channelId,
-                duration: bi.duration ?? null,
-                view_count: bi.view_count ?? null,
-                short_description: desc || null,
-                thumbnail: pickBestThumbnail(bi.thumbnail)
-            }
-
-            console.log("[y-sample] url:", url, "→", video.id, video.title?.slice(0, 60))
-            return json({ ok: true, video })
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e)
-            const lower = msg.toLowerCase()
-            if (
-                lower.includes("not found") ||
-                lower.includes("unavailable") ||
-                lower.includes("private video")
-            ) {
-                return json({ error: "video unavailable" }, { status: 404 })
-            }
-            console.error("[y-sample] getBasicInfo:", msg)
-            return json({ error: "could not load video info" }, { status: 502 })
+        const result = await fetchVideoInfoViaYtDlp(config, videoId)
+        if (!result.ok) {
+            return json({ error: result.error }, { status: result.status })
         }
+        const bi = result.info
+
+        let desc = bi.description ?? ""
+        if (desc.length > DESC_MAX) {
+            desc = desc.slice(0, DESC_MAX - 1) + "…"
+        }
+
+        const video = {
+            id: bi.id ?? videoId,
+            title: bi.title ?? "",
+            author: bi.uploader ?? bi.channel ?? "",
+            channel_id: bi.channel_id ?? "",
+            duration: typeof bi.duration === "number" ? bi.duration : null,
+            view_count: typeof bi.view_count === "number" ? bi.view_count : null,
+            short_description: desc || null,
+            thumbnail: pickBestThumbnail(
+                bi.thumbnails?.map(t => ({ url: t.url, width: t.width ?? 0, height: t.height ?? 0 }))
+            )
+        }
+
+        console.log("[y-sample] url:", url, "→", video.id, video.title?.slice(0, 60))
+        return json({ ok: true, video })
     }
 
     if (req.method === "POST" && pathname === "/download-audio") {
