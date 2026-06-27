@@ -14,6 +14,24 @@
 
 ---
 
+## Download
+
+Grab a ready-to-run build from the [**latest release**](https://github.com/chronoshivt/o-sample/releases/latest) — no terminal, no Node, no Bun. Pick the file for your machine:
+
+| Your machine                 | Download                          |
+| ---------------------------- | --------------------------------- |
+| macOS (Apple Silicon)        | `o-sample-darwin-arm64`           |
+| macOS (Intel)                | `o-sample-darwin-x64`             |
+| Linux (x64)                  | `o-sample-linux-x64`              |
+| Linux (ARM64)                | `o-sample-linux-arm64`            |
+| Windows (x64)                | `o-sample-win32-x64.exe`          |
+
+On macOS/Linux, make it executable once (`chmod +x o-sample-*`), then run it — your browser opens to the app automatically. Each download ships with a `.sha256` sidecar if you want to verify it.
+
+> First launch downloads `yt-dlp` and `ffmpeg` (~80 MB, one-time, cached). After that the app runs fully offline.
+
+Prefer to build it yourself? Keep reading.
+
 ## Get it running
 
 You'll need a terminal and two free tools installed first:
