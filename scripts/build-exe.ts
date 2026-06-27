@@ -33,8 +33,11 @@ function* walkFiles(dir: string): Generator<string> {
 // ───── Phase 1: build the React/Vite client ─────
 
 log("phase 1: vite build")
+// On Windows npm is a .cmd shim that Node can't spawn by bare name — use the
+// platform-correct executable. (bun below is bun.exe and resolves fine.)
+const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
 const viteResult = spawnSync(
-  "npm",
+  npmCmd,
   ["-w", "@o-sample/client", "run", "build"],
   {
     cwd: ROOT,
