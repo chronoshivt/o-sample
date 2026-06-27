@@ -147,85 +147,158 @@ type VideoInfoResult =
     | { ok: true; info: YtDlpVideoInfo }
     | { ok: false; status: number; error: string }
 
-async function fetchVideoInfoViaYtDlp(config: ServerConfig, videoId: string): Promise<VideoInfoResult> {
-    const args = [
-        "--dump-single-json",
-        "--skip-download",
-        "--no-playlist",
-        "--no-progress",
-        "--no-warnings"
-    ]
-    if (config.proxy) args.push("--proxy", config.proxy)
-    if (config.cookiesFile) args.push("--cookies", config.cookiesFile)
-    // Datacenter IPs trip YouTube's bot check on the metadata extraction path.
-    // tv_embedded reliably bypasses it; fall back through the others if it fails.
-    const clients = config.playerClient ?? "tv_embedded,mweb,web_safari,default"
-    args.push("--extractor-args", `youtube:player_client=${clients}`)
-    args.push(`https://www.youtube.com/watch?v=${videoId}`)
+// Ordered yt-dlp player-client strategies, tried in turn until one yields the
+// video. YouTube blocks different clients for different videos — datacenter-IP
+// bot checks, "not available on this app", DRM, region — so when one run fails
+// with a retryable error we re-run with the next set. Each entry is itself a
+// comma list yt-dlp also iterates internally, so the ladder is cheap breadth:
+//   1. tv_embedded — bypasses the datacenter bot check; best general default.
+//   2. android,ios  — mobile clients; cover videos the tv/web clients reject.
+//   3. tv,web       — last-resort web players for anything still missing.
+export const YT_CLIENT_STRATEGIES = [
+    "tv_embedded,mweb,web_safari,default",
+    "android,ios",
+    "tv,web"
+] as const
 
-    const child = spawn(config.ytDlp, args, { stdio: ["ignore", "pipe", "pipe"] })
+// Strategies to attempt for this request. An explicit YT_PLAYER_CLIENT override
+// means the operator picked one on purpose — honor it and don't second-guess.
+export function playerClientStrategies(config: ServerConfig): string[] {
+    return config.playerClient ? [config.playerClient] : [...YT_CLIENT_STRATEGIES]
+}
 
-    let stdout = ""
-    let stderr = ""
-    child.stdout.on("data", c => {
-        stdout += String(c)
-    })
-    child.stderr.on("data", c => {
-        stderr += String(c)
-    })
+export interface YtDlpFailure {
+    // terminal: no other client/strategy will help — stop laddering, fail fast.
+    terminal: boolean
+    status: number
+    label: string
+    tail: string
+}
 
-    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000)
-    let timedOut = false
-    timer.unref?.()
+// Classify a failed yt-dlp run from its output. Terminal failures (private,
+// removed, age/members/geo-gated) won't change with a different player client,
+// so we surface them immediately. Everything else — crucially the
+// "not available on this app" / "requested format" client blocks — is treated
+// as retryable so the fallback ladder gets a chance.
+export function classifyYtDlpFailure(output: string): YtDlpFailure {
+    const tail = (output || "").trim().split("\n").slice(-3).join(" | ")
+    const lower = tail.toLowerCase()
+    const term = (status: number, label: string): YtDlpFailure => ({ terminal: true, status, label, tail })
 
-    const exitCode = await new Promise<number | null>((resolve, reject) => {
+    if (lower.includes("private video")) return term(404, "video is private")
+    if (lower.includes("members-only") || lower.includes("join this channel")) {
+        return term(404, "members-only video")
+    }
+    if (
+        lower.includes("sign in to confirm your age") ||
+        lower.includes("age-restricted") ||
+        lower.includes("inappropriate for some users")
+    ) {
+        return term(403, "age-restricted video (requires sign-in cookies)")
+    }
+    if (lower.includes("removed by the user") || (lower.includes("account") && lower.includes("terminated"))) {
+        return term(404, "video no longer available")
+    }
+    if (
+        lower.includes("not available in your country") ||
+        lower.includes("not available in your location") ||
+        lower.includes("blocked it in your country")
+    ) {
+        return term(451, "video is geo-blocked")
+    }
+    // "Video unavailable" (truly removed) is terminal, but the superficially
+    // similar "not available on this app" is a client block — keep it retryable.
+    if (lower.includes("video unavailable") && !lower.includes("not available on this app")) {
+        return term(404, "video unavailable")
+    }
+    return { terminal: false, status: 502, label: "could not fetch this video", tail }
+}
+
+interface YtDlpRun {
+    code: number | null
+    stdout: string
+    stderr: string
+    timedOut: boolean
+    enoent: boolean
+}
+
+// Spawn yt-dlp once and collect its result. Never rejects — spawn errors are
+// folded into the resolved value so callers can drive the fallback ladder with
+// a plain loop instead of try/catch around every attempt.
+function spawnYtDlp(config: ServerConfig, args: string[], timeoutMs: number): Promise<YtDlpRun> {
+    return new Promise<YtDlpRun>(resolve => {
+        const child = spawn(config.ytDlp, args, { stdio: ["ignore", "pipe", "pipe"] })
+        let stdout = ""
+        let stderr = ""
+        let timedOut = false
+        child.stdout.on("data", c => {
+            stdout += String(c)
+        })
+        child.stderr.on("data", c => {
+            stderr += String(c)
+        })
+        const timer = setTimeout(() => {
+            timedOut = true
+            child.kill("SIGKILL")
+        }, timeoutMs)
+        timer.unref?.()
         child.on("error", err => {
             clearTimeout(timer)
-            reject(err)
+            if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+                console.error("[y-sample] yt-dlp spawn ENOENT", { path: config.ytDlp, err: err.message })
+                resolve({ code: null, stdout, stderr, timedOut: false, enoent: true })
+            } else {
+                console.error("[y-sample] yt-dlp spawn error", err)
+                resolve({ code: null, stdout, stderr: `${stderr}\n${err.message}`, timedOut: false, enoent: false })
+            }
         })
         child.on("close", (code, signal) => {
             clearTimeout(timer)
-            if (signal === "SIGKILL") timedOut = true
-            resolve(code)
+            resolve({ code, stdout, stderr, timedOut: timedOut || signal === "SIGKILL", enoent: false })
         })
-    }).catch((err: Error) => {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-            console.error("[y-sample] yt-dlp spawn ENOENT", { path: config.ytDlp, err: err.message })
-            return "ENOENT" as const
-        }
-        console.error("[y-sample] yt-dlp spawn error", err)
-        throw err
     })
+}
 
-    if (exitCode === "ENOENT") {
-        return { ok: false, status: 500, error: `yt-dlp not installed on server (tried: ${config.ytDlp})` }
-    }
-    if (timedOut) {
-        return { ok: false, status: 504, error: "video info lookup timed out" }
-    }
-    if (exitCode !== 0) {
-        const tail = (stderr || stdout).trim().split("\n").slice(-3).join(" | ")
-        const lower = tail.toLowerCase()
-        console.error("[y-sample] yt-dlp info exit", exitCode, tail)
-        if (lower.includes("private video") || lower.includes("unavailable") || lower.includes("not available")) {
-            return { ok: false, status: 404, error: "video unavailable" }
+export async function fetchVideoInfoViaYtDlp(config: ServerConfig, videoId: string): Promise<VideoInfoResult> {
+    const baseArgs = ["--dump-single-json", "--skip-download", "--no-playlist", "--no-progress", "--no-warnings"]
+    if (config.proxy) baseArgs.push("--proxy", config.proxy)
+    if (config.cookiesFile) baseArgs.push("--cookies", config.cookiesFile)
+    const url = `https://www.youtube.com/watch?v=${videoId}`
+
+    let lastFailure: YtDlpFailure = { terminal: false, status: 502, label: "could not load video info", tail: "" }
+
+    for (const clients of playerClientStrategies(config)) {
+        const args = [...baseArgs, "--extractor-args", `youtube:player_client=${clients}`, url]
+        const run = await spawnYtDlp(config, args, 30_000)
+
+        if (run.enoent) {
+            return { ok: false, status: 500, error: `yt-dlp not installed on server (tried: ${config.ytDlp})` }
         }
-        return { ok: false, status: 502, error: "could not load video info" }
+        if (run.timedOut) {
+            return { ok: false, status: 504, error: "video info lookup timed out" }
+        }
+        if (run.code === 0) {
+            try {
+                return { ok: true, info: JSON.parse(run.stdout) as YtDlpVideoInfo }
+            } catch (e) {
+                console.error("[y-sample] yt-dlp json parse error", e)
+                return { ok: false, status: 502, error: "could not parse video info" }
+            }
+        }
+
+        lastFailure = classifyYtDlpFailure(run.stderr || run.stdout)
+        console.error(`[y-sample] yt-dlp info failed [client=${clients}]`, run.code, lastFailure.label, "|", lastFailure.tail)
+        if (lastFailure.terminal) break
     }
 
-    try {
-        return { ok: true, info: JSON.parse(stdout) as YtDlpVideoInfo }
-    } catch (e) {
-        console.error("[y-sample] yt-dlp json parse error", e)
-        return { ok: false, status: 502, error: "could not parse video info" }
-    }
+    return { ok: false, status: lastFailure.status, error: lastFailure.label }
 }
 
 type YtDlpResult = { ok: true; filename: string; cached: boolean } | { ok: false; status: number; error: string }
 
 const inFlightDownloads = new Map<string, Promise<YtDlpResult>>()
 
-async function downloadAudioViaYtDlp(config: ServerConfig, videoId: string): Promise<YtDlpResult> {
+export async function downloadAudioViaYtDlp(config: ServerConfig, videoId: string): Promise<YtDlpResult> {
     const filename = `${videoId}.mp3`
     const filePath = path.join(config.downloadDir, filename)
 
@@ -247,7 +320,7 @@ async function downloadAudioViaYtDlp(config: ServerConfig, videoId: string): Pro
 async function runYtDlp(config: ServerConfig, videoId: string, filename: string): Promise<YtDlpResult> {
     const outputTemplate = path.join(config.downloadDir, `${videoId}.%(ext)s`)
 
-    const args = [
+    const baseArgs = [
         "-x",
         "--audio-format",
         "mp3",
@@ -260,66 +333,39 @@ async function runYtDlp(config: ServerConfig, videoId: string, filename: string)
         "-o",
         outputTemplate
     ]
-    if (config.proxy) args.push("--proxy", config.proxy)
-    if (config.cookiesFile) args.push("--cookies", config.cookiesFile)
-    if (config.playerClient) args.push("--extractor-args", `youtube:player_client=${config.playerClient}`)
-    args.push(`https://www.youtube.com/watch?v=${videoId}`)
+    if (config.proxy) baseArgs.push("--proxy", config.proxy)
+    if (config.cookiesFile) baseArgs.push("--cookies", config.cookiesFile)
+    // ffmpeg-location lets the bundled exe point yt-dlp at its extracted ffmpeg.
+    if (config.ffmpeg && config.ffmpeg !== "ffmpeg") baseArgs.push("--ffmpeg-location", config.ffmpeg)
+    const url = `https://www.youtube.com/watch?v=${videoId}`
+    const partialPath = path.join(config.downloadDir, filename)
 
-    const child = spawn(config.ytDlp, args, { stdio: ["ignore", "pipe", "pipe"] })
+    let lastFailure: YtDlpFailure = { terminal: false, status: 502, label: "download failed", tail: "" }
 
-    let stdout = ""
-    let stderr = ""
-    child.stdout.on("data", c => {
-        stdout += String(c)
-    })
-    child.stderr.on("data", c => {
-        stderr += String(c)
-    })
+    for (const clients of playerClientStrategies(config)) {
+        const args = [...baseArgs, "--extractor-args", `youtube:player_client=${clients}`, url]
+        const run = await spawnYtDlp(config, args, config.downloadTimeoutMs)
 
-    const timer = setTimeout(() => child.kill("SIGKILL"), config.downloadTimeoutMs)
-    let timedOut = false
-    timer.unref?.()
-
-    const exitCode = await new Promise<number | null>((resolve, reject) => {
-        child.on("error", err => {
-            clearTimeout(timer)
-            reject(err)
-        })
-        child.on("close", (code, signal) => {
-            clearTimeout(timer)
-            if (signal === "SIGKILL") timedOut = true
-            resolve(code)
-        })
-    }).catch((err: Error) => {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-            console.error("[y-sample] yt-dlp spawn ENOENT", { path: config.ytDlp, err: err.message })
-            return "ENOENT" as const
+        if (run.enoent) {
+            return { ok: false, status: 500, error: `yt-dlp not installed on server (tried: ${config.ytDlp})` }
         }
-        console.error("[y-sample] yt-dlp spawn error", err)
-        throw err
-    })
-
-    if (exitCode === "ENOENT") {
-        return { ok: false, status: 500, error: `yt-dlp not installed on server (tried: ${config.ytDlp})` }
-    }
-
-    if (timedOut) {
-        await rm(path.join(config.downloadDir, filename), { force: true }).catch(() => {})
-        return { ok: false, status: 504, error: "download timed out" }
-    }
-
-    if (exitCode !== 0) {
-        await rm(path.join(config.downloadDir, filename), { force: true }).catch(() => {})
-        const tail = (stderr || stdout).trim().split("\n").slice(-3).join(" | ")
-        const lower = tail.toLowerCase()
-        console.error("[y-sample] yt-dlp exit", exitCode, tail)
-        if (lower.includes("private video") || lower.includes("unavailable") || lower.includes("not available")) {
-            return { ok: false, status: 404, error: `video unavailable: ${tail}` }
+        if (run.timedOut) {
+            await rm(partialPath, { force: true }).catch(() => {})
+            return { ok: false, status: 504, error: "download timed out" }
         }
-        return { ok: false, status: 502, error: `download failed: ${tail}` }
+        if (run.code === 0) {
+            return { ok: true, filename, cached: false }
+        }
+
+        // Failed attempt — drop any partial file before retrying the next client.
+        await rm(partialPath, { force: true }).catch(() => {})
+        lastFailure = classifyYtDlpFailure(run.stderr || run.stdout)
+        console.error(`[y-sample] yt-dlp download failed [client=${clients}]`, run.code, lastFailure.label, "|", lastFailure.tail)
+        if (lastFailure.terminal) break
     }
 
-    return { ok: true, filename, cached: false }
+    const detail = lastFailure.tail ? `${lastFailure.label}: ${lastFailure.tail}` : lastFailure.label
+    return { ok: false, status: lastFailure.status, error: detail }
 }
 
 type ClipAudioResult =

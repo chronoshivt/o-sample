@@ -3,10 +3,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import {
+    classifyYtDlpFailure,
     extractYoutubeVideoId,
     handleRequest,
     parseRangeHeader,
+    playerClientStrategies,
     sanitizeDownloadFileName,
+    YT_CLIENT_STRATEGIES,
     type ServerConfig
 } from "./app"
 
@@ -25,10 +28,26 @@ async function makeConfig(): Promise<ServerConfig> {
         downloadDir: dir,
         ytDlp: "yt-dlp",
         ffmpeg: "ffmpeg",
+        proxy: null,
+        cookiesFile: null,
+        playerClient: null,
         downloadTimeoutMs: 1000,
         clipTimeoutMs: 1000
     }
 }
+
+const baseConfig = (over: Partial<ServerConfig> = {}): ServerConfig => ({
+    port: 0,
+    downloadDir: "/tmp",
+    ytDlp: "yt-dlp",
+    ffmpeg: "ffmpeg",
+    proxy: null,
+    cookiesFile: null,
+    playerClient: null,
+    downloadTimeoutMs: 1000,
+    clipTimeoutMs: 1000,
+    ...over
+})
 
 describe("server helpers", () => {
     test("extractYoutubeVideoId supports watch, short, and youtu.be urls", () => {
@@ -48,6 +67,39 @@ describe("server helpers", () => {
         expect(parseRangeHeader("bytes=5-", 10)).toEqual({ start: 5, end: 9 })
         expect(parseRangeHeader("bytes=-4", 10)).toEqual({ start: 6, end: 9 })
         expect(parseRangeHeader("bytes=20-30", 10)).toBeNull()
+    })
+})
+
+describe("yt-dlp player-client fallback", () => {
+    test("ladders through every strategy by default", () => {
+        expect(playerClientStrategies(baseConfig())).toEqual([...YT_CLIENT_STRATEGIES])
+        expect(YT_CLIENT_STRATEGIES[0]).toContain("tv_embedded")
+    })
+
+    test("an explicit override is the only strategy tried", () => {
+        expect(playerClientStrategies(baseConfig({ playerClient: "web_safari" }))).toEqual(["web_safari"])
+    })
+
+    test('"not available on this app" is retryable, not terminal', () => {
+        // The exact message from the reported video (5mptP0Fvr3A). It must NOT be
+        // treated as a permanent failure, or the fallback ladder never runs.
+        const f = classifyYtDlpFailure(
+            "ERROR: [youtube] 5mptP0Fvr3A: The following content is not available on this app. " +
+                "Watch on the latest version of YouTube."
+        )
+        expect(f.terminal).toBe(false)
+    })
+
+    test("requested-format and DRM errors stay retryable (another client may work)", () => {
+        expect(classifyYtDlpFailure("ERROR: Requested format is not available").terminal).toBe(false)
+        expect(classifyYtDlpFailure("ERROR: [youtube] x: This video is DRM protected").terminal).toBe(false)
+    })
+
+    test("truly unavailable videos are terminal", () => {
+        expect(classifyYtDlpFailure("ERROR: Private video. Sign in if you've been granted access").terminal).toBe(true)
+        expect(classifyYtDlpFailure("ERROR: [youtube] x: Video unavailable").terminal).toBe(true)
+        expect(classifyYtDlpFailure("ERROR: Join this channel to get access to members-only content").terminal).toBe(true)
+        expect(classifyYtDlpFailure("ERROR: Sign in to confirm your age").terminal).toBe(true)
     })
 })
 
