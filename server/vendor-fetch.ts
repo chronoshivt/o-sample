@@ -84,8 +84,20 @@ export async function fetchVendorBinaries(
 
   if (!existsSync(paths.ffmpeg)) {
     log(`resolve ffmpeg-static latest release`)
+    // Unauthenticated api.github.com is rate-limited to 60 req/hr per IP, which
+    // CI runners share and routinely exhaust (→ 403). Authenticate with the
+    // token the workflow injects (or any local gh/GITHUB token) to lift the
+    // limit to 5000/hr. A User-Agent is required by the GitHub API.
+    const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN
     const releaseRes = await fetch(
-      "https://api.github.com/repos/eugeneware/ffmpeg-static/releases/latest"
+      "https://api.github.com/repos/eugeneware/ffmpeg-static/releases/latest",
+      {
+        headers: {
+          "User-Agent": "o-sample-build",
+          Accept: "application/vnd.github+json",
+          ...(ghToken ? { Authorization: `Bearer ${ghToken}` } : {}),
+        },
+      }
     )
     if (!releaseRes.ok) {
       throw new Error(`ffmpeg release lookup failed: ${releaseRes.status}`)

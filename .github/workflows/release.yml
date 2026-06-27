@@ -56,6 +56,10 @@ jobs:
 
       - name: Build executable
         run: npm run build:exe
+        env:
+          # Authenticates the ffmpeg-static release lookup in vendor-fetch.ts so
+          # it isn't throttled by the shared-runner unauthenticated rate limit.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Rename the host-named output (o-sample / o-sample.exe) to a
       # platform-qualified asset name so all five can coexist on one release,
