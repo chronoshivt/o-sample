@@ -67,23 +67,37 @@ jobs:
           # the Intel-mac artifact on this arm64 runner.
           BUILD_TARGET_ARCH: ${{ matrix.target_arch }}
 
-      # Rename the host-named output (o-sample / o-sample.exe) to a
-      # platform-qualified asset name so all five can coexist on one release,
-      # and emit a SHA256 sidecar so downloaders can verify integrity.
-      - name: Stage release asset
+      # Package each binary into a recognizable archive (instead of a raw,
+      # extension-less file). Archives preserve the executable bit that browsers
+      # strip from a bare download, so the binary is runnable after extraction.
+      # Unix → .tar.gz; Windows → .zip. A SHA256 sidecar covers the archive.
+      - name: Package release archive (Unix)
+        if: matrix.binary == 'o-sample'
         shell: bash
         run: |
-          mkdir -p out
-          ext=""
-          if [ "${{ matrix.binary }}" = "o-sample.exe" ]; then ext=".exe"; fi
-          asset="o-sample-${{ matrix.target }}${ext}"
-          cp "dist/${{ matrix.binary }}" "out/${asset}"
+          mkdir -p out stage
+          cp "dist/o-sample" "stage/o-sample"
+          chmod +x "stage/o-sample"
+          archive="o-sample-${{ matrix.target }}.tar.gz"
+          tar -czf "out/${archive}" -C stage o-sample
           cd out
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "${asset}" > "${asset}.sha256"
+            sha256sum "${archive}" > "${archive}.sha256"
           else
-            shasum -a 256 "${asset}" > "${asset}.sha256"
+            shasum -a 256 "${archive}" > "${archive}.sha256"
           fi
+
+      - name: Package release archive (Windows)
+        if: matrix.binary == 'o-sample.exe'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out, stage | Out-Null
+          Copy-Item dist/o-sample.exe stage/o-sample.exe
+          $archive = "o-sample-${{ matrix.target }}.zip"
+          Compress-Archive -Path stage/o-sample.exe -DestinationPath "out/$archive" -Force
+          $hash = (Get-FileHash -Algorithm SHA256 "out/$archive").Hash.ToLower()
+          # sha256sum-compatible: "<hash>  <name>" with a trailing newline.
+          "$hash  $archive`n" | Out-File -Encoding ascii -NoNewline "out/$archive.sha256"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

@@ -20,13 +20,24 @@ Grab a ready-to-run build from the [**latest release**](https://github.com/chron
 
 | Your machine                 | Download                          |
 | ---------------------------- | --------------------------------- |
-| macOS (Apple Silicon)        | `o-sample-darwin-arm64`           |
-| macOS (Intel)                | `o-sample-darwin-x64`             |
-| Linux (x64)                  | `o-sample-linux-x64`              |
-| Linux (ARM64)                | `o-sample-linux-arm64`            |
-| Windows (x64)                | `o-sample-win32-x64.exe`          |
+| macOS (Apple Silicon)        | `o-sample-darwin-arm64.tar.gz`    |
+| macOS (Intel)                | `o-sample-darwin-x64.tar.gz`      |
+| Linux (x64)                  | `o-sample-linux-x64.tar.gz`       |
+| Linux (ARM64)                | `o-sample-linux-arm64.tar.gz`     |
+| Windows (x64)                | `o-sample-win32-x64.zip`          |
 
-On macOS/Linux, make it executable once (`chmod +x o-sample-*`), then run it — your browser opens to the app automatically. Each download ships with a `.sha256` sidecar if you want to verify it.
+**macOS / Linux** — extract and run:
+
+```bash
+tar -xzf o-sample-*.tar.gz
+./o-sample
+```
+
+**Windows** — unzip and double-click `o-sample.exe`.
+
+Your browser opens to the app automatically. Each download has a `.sha256` sidecar to verify it (`shasum -a 256 -c o-sample-*.tar.gz.sha256`).
+
+> **macOS first run:** the binary is unsigned, so macOS may say it "cannot be opened." Right-click it → **Open** → **Open**, or run `xattr -d com.apple.quarantine ./o-sample` once.
 
 > First launch downloads `yt-dlp` and `ffmpeg` (~80 MB, one-time, cached). After that the app runs fully offline.
 
