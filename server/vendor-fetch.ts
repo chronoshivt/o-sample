@@ -22,12 +22,14 @@ export const YTDLP_URLS: Record<string, string> = {
 
 export type VendorPaths = { ytDlp: string; ffmpeg: string }
 
-export function vendorPlatformKey(): string {
-  return `${process.platform}-${process.arch}`
+// Pass an explicit arch to describe a cross-compile target (e.g. building the
+// darwin-x64 artifact on an arm64 runner); defaults to the host arch.
+export function vendorPlatformKey(arch: string = process.arch): string {
+  return `${process.platform}-${arch}`
 }
 
-export function isPlatformSupported(): boolean {
-  return vendorPlatformKey() in YTDLP_URLS
+export function isPlatformSupported(arch: string = process.arch): boolean {
+  return vendorPlatformKey(arch) in YTDLP_URLS
 }
 
 // Windows requires the .exe suffix for spawn() to find the binary via PATHEXT.
@@ -65,9 +67,14 @@ async function downloadToFile(
 // Downloads only what's missing — `vendor/` is treated as a cache.
 export async function fetchVendorBinaries(
   rootDir: string,
-  log: (msg: string) => void = () => {}
+  log: (msg: string) => void = () => {},
+  opts: { targetArch?: string } = {}
 ): Promise<VendorPaths> {
-  const key = vendorPlatformKey()
+  // targetArch lets a build cross-fetch for another arch (same OS) — e.g. the
+  // x64 ffmpeg while running on an arm64 macOS runner. yt-dlp's macOS build is
+  // universal, so only ffmpeg's URL is arch-specific.
+  const arch = opts.targetArch || process.arch
+  const key = vendorPlatformKey(arch)
   if (!YTDLP_URLS[key]) {
     throw new Error(
       `unsupported platform: ${key}\n` +
@@ -105,7 +112,7 @@ export async function fetchVendorBinaries(
     const { tag_name: tag } = (await releaseRes.json()) as { tag_name: string }
     const ffmpegUrl =
       `https://github.com/eugeneware/ffmpeg-static/releases/download/${tag}` +
-      `/ffmpeg-${process.platform}-${process.arch}.gz`
+      `/ffmpeg-${process.platform}-${arch}.gz`
     log(`download ffmpeg ${tag}`)
     await downloadToFile(ffmpegUrl, paths.ffmpeg, { gunzip: true })
   }

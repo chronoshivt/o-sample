@@ -23,9 +23,12 @@ jobs:
           - os: macos-14
             target: darwin-arm64
             binary: o-sample
-          - os: macos-13
+          # Intel-mac binary is cross-compiled on the Apple Silicon runner —
+          # GitHub's macos-13 (Intel) runners are deprecated and queue for ages.
+          - os: macos-14
             target: darwin-x64
             binary: o-sample
+            target_arch: x64
           - os: ubuntu-latest
             target: linux-x64
             binary: o-sample
@@ -60,6 +63,9 @@ jobs:
           # Authenticates the ffmpeg-static release lookup in vendor-fetch.ts so
           # it isn't throttled by the shared-runner unauthenticated rate limit.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Empty for native builds; "x64" tells build-exe.ts to cross-compile
+          # the Intel-mac artifact on this arm64 runner.
+          BUILD_TARGET_ARCH: ${{ matrix.target_arch }}
 
       # Rename the host-named output (o-sample / o-sample.exe) to a
       # platform-qualified asset name so all five can coexist on one release,

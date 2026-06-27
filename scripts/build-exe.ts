@@ -57,16 +57,23 @@ if (!existsSync(distDir)) {
 
 // ───── Phase 2: vendor yt-dlp + ffmpeg for the current platform ─────
 
-if (!isPlatformSupported()) {
+// Cross-compile target. BUILD_TARGET_ARCH lets CI build the darwin-x64 artifact
+// on an Apple Silicon runner (Intel macOS runners are scarce/deprecated).
+// Defaults to the host arch for normal local builds.
+const targetArch = process.env.BUILD_TARGET_ARCH || process.arch
+const targetKey = vendorPlatformKey(targetArch)
+const crossCompiling = targetArch !== process.arch
+
+if (!isPlatformSupported(targetArch)) {
   console.error(
-    `unsupported platform: ${vendorPlatformKey()}\n` +
+    `unsupported target: ${targetKey}\n` +
     `supported: ${Object.keys(YTDLP_URLS).join(", ")}`
   )
   process.exit(1)
 }
 
-log(`phase 2: vendor binaries for ${vendorPlatformKey()}`)
-await fetchVendorBinaries(ROOT, msg => log(`  ${msg}`))
+log(`phase 2: vendor binaries for ${targetKey}${crossCompiling ? ` (cross-compiling on ${process.arch})` : ""}`)
+await fetchVendorBinaries(ROOT, msg => log(`  ${msg}`), { targetArch })
 
 // ───── Phase 3: generate static-import .gen.ts files ─────
 
@@ -120,12 +127,17 @@ await mkdir(distOut, { recursive: true })
 const exeName = process.platform === "win32" ? "o-sample.exe" : "o-sample"
 const outfile = resolve(distOut, exeName)
 
+// bun's compile target. For a host build "bun" is sufficient; for a cross-arch
+// build we must name it fully, e.g. bun-darwin-x64.
+const bunOs = process.platform === "win32" ? "windows" : process.platform
+const bunTarget = crossCompiling ? `bun-${bunOs}-${targetArch}` : "bun"
+
 const compileResult = spawnSync(
   "bun",
   [
     "build",
     "--compile",
-    "--target=bun",
+    `--target=${bunTarget}`,
     "--minify",
     "--sourcemap",
     resolve(ROOT, "server/serve-bundled.ts"),
